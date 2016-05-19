@@ -6,6 +6,7 @@ Created on 2016/5/11
 """
 import cv2
 import numpy as np
+#import time
 
 def scaleResize(frame):
     size = frame.shape[0]*frame.shape[1]
@@ -19,87 +20,200 @@ def scaleResize(frame):
         scale=1
     return frame,scale
     
-def findRectangles(bgSubtractor,frame, sensitivity = 300, kernel = np.ones((3,3),np.uint8)):
-    fgmask = bgSubtractor.apply(frame)
-    #bgmask = fgbg.getBackgroundImage()
+def findContours(binaryImg,iteration=2,kernel = np.ones((3,3),np.uint8)):
+    binaryImg = cv2.morphologyEx(binaryImg, cv2.MORPH_OPEN, kernel, iteration)
+    binaryImg = cv2.dilate(binaryImg, kernel, 3)
+    im2, contourList, hierarchy = cv2.findContours(binaryImg, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    return contourList
+
+def findMaxContour(contourList):
+    maxArea = 0
+    maxContour = []
+    for contour in contourList:
+        if maxArea<cv2.contourArea(contour):
+            maxArea = cv2.contourArea(contour)
+            maxContour = contour
+    return maxContour
     
-    fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_OPEN, kernel, iterations=2)
-    fgmask = cv2.dilate(fgmask, kernel, iterations=3)
-    im2, contours, hierarchy = cv2.findContours(fgmask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+def findRectangles(frame, contourList, ratio = 0.01):
     rects=[]
-#    rectArray = np.array([],np.int32)
-    if len(contours)>0:
-        for contour in contours:
-            rect = cv2.boundingRect(contour)
-            ratio = fgmask.size/(rect[2]*rect[3])
-            if ratio>10 and ratio<sensitivity:
+    if len(contourList)>0:
+        if type(contourList)==list:
+            if len(contourList)>0:
+                for contour in contourList:
+                    rect = cv2.boundingRect(contour)
+                    mul = frame.size/(rect[2]*rect[3])
+                    if 1<mul and 1/ratio>mul:
+                        rects.append(rect)
+    
+        elif type(contourList)==np.ndarray:
+            rect = cv2.boundingRect(contourList)
+            mul = frame.size/(rect[2]*rect[3])
+            if 1<mul and 1/ratio>mul:
                 rects.append(rect)
-#                if len(rects)>0:
-#                    rectArray = np.array(rects)     
+    #else:
+        #raise ValueError,'contourList is null'
     rectArray = np.array(rects,np.int32)
     return rectArray
     
-def drawRectangles(frame, rectArray):
-    if len(rectArray)>0:
-        pts1 = rectArray[:,0:2]
-        pts2 = rectArray[:,0:2]+rectArray[:,2:4]
-    for i in range(0,len(rectArray)):
-        cv2.rectangle(frame, tuple(pts1[i]),tuple(pts2[i]),(0,0,255),3)
+def drawRectangle(frame, rect, scale=1, scalar=(0,0,255)):
+    frame = cv2.rectangle(frame, tuple(rect[0:2]),(rect[0]+rect[2],rect[1]+rect[3]),scalar,3)
     return frame
     
-def findCentre(rectArray):
-    centreArray = np.array([],np.int32)
+def drawRectangles(frame, rectArray,scale=1, scalar=(0,0,255)):
+    if type(rectArray)==np.ndarray:
+        if len(rectArray)>0:
+            if scale != 1:
+                rectArray = rectArray * scale
+            pts1 = rectArray[:,0:2]
+            pts2 = rectArray[:,0:2]+rectArray[:,2:4]
+        for i in range(0,len(rectArray)):
+            frame = cv2.rectangle(frame, tuple(pts1[i]),tuple(pts2[i]),scalar,3)
+    else:
+        raise ValueError,'rectArray is not a numpy.ndarray'
+    return frame
+    
+def findCentres(rectArray):
+    cpArray = np.array([],np.int32)
     if len(rectArray)>0:
-        centreArray = rectArray[:,0:2]+rectArray[:,2:4]/2
-    return centreArray
+        cpArray = rectArray[:,0:2]+rectArray[:,2:4]/2
+    return cpArray
 
-def drawPoints(frame, points,radius=2,scalar=(0,0,255)):
-    for i in range(0,len(points)):
-        cv2.circle(frame,tuple(points[i]),radius,scalar,-1)
+def drawPoints(frame, pointArray,scale=1,radius=2,scalar=(0,0,255)):
+    pointArray = pointArray*scale
+    for p in pointArray:
+        cv2.circle(frame,tuple(p),radius,scalar,-1)
     return frame
     
-cap = cv2.VideoCapture('1.avi')
-#cap = cv2.VideoCapture('rtsp://192.168.1.133:554/cam/realmonitor?channel=1&subtype=1&unicast=true&proto=Onvif')
+class InvasionDetector(object):
+    def __init__(self):
+        self.bgSubtractor = cv2.createBackgroundSubtractorKNN()
+        #self.ratio = 0.01
+        #self.learningRate = -1
+        self.scale = 1
+        self.fgmask = np.array([])
+        #self.bgm = np.array([])
+        self.contourList = []
+        self.maxContour = []
+        self.bbox = []
+        self.ret = False
+        
+        
+    def operate(self,frame,ratio = 0.01,learningRate = -1):
+        #self.ratio = ratio
+        #self.learningRate = learningRate
+        frame,self.scale = scaleResize(frame)
+        #start = time.time()
+        self.fgmask = self.bgSubtractor.apply(frame, learningRate)
+        #end = time.time()
+        #print end-start
+        #连通区域
+        self.contourList = findContours(self.fgmask)
+        #最大连通区域
+        self.maxContour = findMaxContour(self.contourList)
+#        rect = cv2.boundingRect(maxContour)
+#        rectArray = np.array(rect)*scale
+        
+        maxRectArray = findRectangles(self.fgmask,self.maxContour,ratio)
+        if len(maxRectArray)>0:
+            self.ret = True
+            bboxArray = maxRectArray[0]*self.scale
+            self.bbox = bboxArray.tolist()
+        else:
+            self.ret = False
+            self.bbox = []
+        return self.ret,self.bbox
+        
+    def getBgm(self):
+        return self.bgSubtractor.getBackgroundImage()
+#cap = cv2.VideoCapture('1.avi')
+#sensitivity = 300
+cap = cv2.VideoCapture('rtsp://192.168.1.133:554/cam/realmonitor?channel=1&subtype=1&unicast=true&proto=Onvif')
 #cv2.namedWindow('frame')
 #cv2.namedWindow('fgmask')
-bgSubtractor = cv2.createBackgroundSubtractorKNN()
+#bgSubtractor = cv2.createBackgroundSubtractorKNN()
 #kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 
-learningRate = 0.1
+#learningRate = -1
 #bgm_update_flag = False
+id = InvasionDetector()
 
 #fgbg = cv2.createBackgroundSubtractorGMG()
 #bgs = cv2.createBackgroundSubtractorMOG2()
-count=1
+
+firstFrame = True
 canvas = np.array([],np.uint8)
 while 1:
-    if count == 1:
-        count = count + 1
+    if firstFrame:
+        
         ret, frame = cap.read()
         if not ret:
-            pass
-        canvas = np.zeros(frame.shape,np.uint8)
+            break
+        else:
+            firstFrame = False
+            canvas = np.zeros(frame.shape[0:2],np.uint8)
     else:
         ret, frame = cap.read()
         if not ret:
             break
-        temp,scale = scaleResize(frame)
-    #    if frame.size>307200:
-    #        frame = cv2.resize(frame, (640, 480))
-        rectArray = findRectangles(bgSubtractor,temp)
-        rectArray = rectArray * scale
-        frame = drawRectangles(frame,rectArray)
-        centreArray = findCentre(rectArray)
-        for i in range(0,len(centreArray)):
-            cv2.circle(canvas,tuple(centreArray[i]),2,(0,0,255),-1)
-    
-        rp = np.nonzero(canvas)[0:2]
-        frame[rp]=(0,0,255)
-        cv2.imshow('frame', frame)
-        cv2.imshow('canvas',canvas)
+        
+        
+        ret,rect = id.operate(frame,0.01,-1)
+        contours = np.array(id.contourList)*id.scale
+        cv2.drawContours(frame,contours,-1,(0,255,0),3)  
+        if len(rect)>0:
+            drawRectangle(frame,rect)
+        
+        #bgimg = id.getBgm()
+        cv2.namedWindow('bg',0)
+        cv2.imshow('bg',id.fgmask)
+#        temp,scale = scaleResize(frame)
+#        #背景差分
+#        fgmask = bgSubtractor.apply(temp, learningRate)
+#        #连通区域
+#        contourList = findContours(fgmask)
+#        rectArray = findRectangles(fgmask,contourList, sensitivity)        
+#        frame = drawRectangles(frame, rectArray, scale, (0,255,0))
+#        #最大连通区域
+#        maxContour = findMaxContour(contourList)
+#        maxRectArray = findRectangles(fgmask,maxContour,sensitivity)
+#        cpArray = findCentres(maxRectArray)
+#        frame = drawRectangles(frame, maxRectArray,scale)
+        
+        
+        
+        
+        #drawPoints(canvas, cpArray, scale)
+        #nzp = np.nonzero(canvas)[0:2]
+#        if(len(cpArray)>0):
+#            cpArray=cpArray*scale
+#            canvas[cpArray[:,1],cpArray[:,0]]=255
+#        cv2.imshow('canvas',canvas)
+#        nzp = np.nonzero(canvas)[0:2]
+#        frame[nzp]=(0,0,255)
+#        pt1 = rectArray[0:2]
+#        pt2 = rectArray[0:2]+rectArray[2:4]
+#        cv2.rectangle(frame, tuple(pt1),tuple(pt2),(0,0,255),3)
+        #连通区域外接矩形
+
+        #bgmask = bgSubtractor.getBackgroundImage()
+        #尺度还原
+        #rectArray = rectArray * scale
+        
+        #frame = drawRectangles(frame,rectArray)
+        #centreArray = findCentres(rectArray)
+        #for i in range(0,len(centreArray)):
+        #    cv2.circle(canvas,tuple(centreArray[i]),2,(0,0,255),-1)
+        #rp = np.nonzero(canvas)[0:2]
+        #frame[rp]=(0,0,255)
+        #cv2.imshow('bgmask', bgmask)
+        
+    cv2.imshow('frame', frame)
+        #cv2.imshow('canvas',canvas)
     
 #    cv2.imshow('fgmask', fgmask)
-#    cv2.imshow('bgmask', bgmask)
+    
+    
     k = cv2.waitKey(30) & 0xff
     if k == 27:
         break
