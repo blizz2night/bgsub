@@ -32,8 +32,26 @@ def findContours(binaryImg, iteration=2, kernel=np.ones((3, 3), np.uint8), pixel
 
 
 def findMaxContour(contourList):
-	return reduce(lambda x, y: x if cv2.contourArea(x) > cv2.contourArea(y) else y, contourList)
+	if type(contourList) == list:
+		if len(contourList) > 1:
+			return reduce(lambda x, y: x if cv2.contourArea(tuple(x)) > cv2.contourArea(tuple(y)) else y, contourList)
+		elif len(contourList) == 1:
+			return contourList[0]
+		else:
+			raise ValueError, 'contours is null'
+	else:
+		raise ValueError, 'contours is not a list'
 
+def findMaxRect(rectList):
+	if type(rectList) == list:
+		if len(rectList) > 1:
+			return reduce(lambda x, y: x if x[2]*x[3] > y[2]*y[3] else y, rectList)
+		elif len(rectList) == 1:
+			return rectList[0]
+		else:
+			raise ValueError, 'contours is null'
+	else:
+		raise ValueError, 'contours is not a list'
 
 def findRectangles(frame, contourList, ratio=0.002):
 	rects = []
@@ -76,10 +94,11 @@ def findCentres(rects):
 	centrePoints = []
 	if type(rects) == list:
 		if len(rects) > 0:
-			rectArray = np.array([])
-			rectArray = np.array(rects)
-			tempArray = rectArray[:, 0:2] + rectArray[:, 2:4] / 2
-			centrePoints = tempArray.tolist()
+			centrePoints = map(lambda x:(x[0]+0.5*x[2],x[1]+0.5*x[3]),rects)
+			# rectArray = np.array([])
+			# rectArray = np.array(rects)
+			# tempArray = rectArray[:, 0:2] + rectArray[:, 2:4] / 2
+			# centrePoints = tempArray.tolist()
 		else:
 			raise ValueError, 'rects is null'
 	else:
@@ -92,11 +111,46 @@ def findCentres(rects):
 #    for p in pointArray:
 #        cv2.circle(frame,tuple(p),radius,scalar,-1)
 #    return frame
+# 点
+class Point(object):
+	def __init__(self, x, y):
+		self.x, self.y = x, y
+
+# 向量
+class Vector(object):
+	def __init__(self, start_point=Point, end_point=Point):
+		self.start, self.end = start_point, end_point
+		self.x = end_point.x - start_point.x
+		self.y = end_point.y - start_point.y
+
+ZERO = 1e-9
+
+def negative(vector):
+    """取反"""
+    return Vector(vector.end_point, vector.start_point)
+
+def vector_product(vectorA, vectorB):
+    '''计算 x_1 * y_2 - x_2 * y_1'''
+    return vectorA.x * vectorB.y - vectorB.x * vectorA.y
+
+def isIntersected(A, B, C, D):
+    '''A, B, C, D 为 Point 类型'''
+    AC = Vector(A, C)
+    AD = Vector(A, D)
+    BC = Vector(B, C)
+    BD = Vector(B, D)
+    CA = negative(AC)
+    CB = negative(BC)
+    DA = negative(AD)
+    DB = negative(BD)
+
+    return (vector_product(AC, AD) * vector_product(BC, BD) <= ZERO) \
+        and (vector_product(CA, CB) * vector_product(DA, DB) <= ZERO)
 
 class InvasionDetector(object):
 	def __init__(self, ratio=0.002, learningRate=-1):
 		# self.bgSubtractor = cv2.createBackgroundSubtractorKNN()
-		self.bgSubtractor = cv2.BackgroundSubtractorMOG2()
+		self.bgSubtractor = cv2.BackgroundSubtractorMOG()
 		self.ratio = ratio
 		self.learningRate = learningRate
 		self.scale = 1
@@ -107,7 +161,12 @@ class InvasionDetector(object):
 		self.bbox = []
 		self.contourRects = []
 		self.ret = False
+		#上一帧时间
+		self.lasttime = 0
+		self.lastpos = [-1,-1]
+		self.path = []
 
+	#入侵检测: ratio敏感度:目标占画面比
 	def operate(self, frame, ratio=0.002, learningRate=-1):
 		self.ratio = ratio
 		self.learningRate = learningRate
@@ -129,20 +188,59 @@ class InvasionDetector(object):
 		else:
 			self.contourRects = []
 			self.ret = False
-			# 最大连通区域
-			# self.maxContour = findMaxContour(self.contourList)
-		#        rect = cv2.boundingRect(maxContour)
-		#        rectArray = np.array(rect)*scale
-
-		# maxRectArray = findRectangles(self.fgmask,self.maxContour,ratio)
-		#        if len(maxRectArray)>0:
-		#            self.ret = True
-		#            bboxArray = maxRectArray[0]*self.scale
-		#            self.bbox = bboxArray.tolist()
-		#        else:
-		#            self.ret = False
-		#            self.bbox = []
 		return self.ret, self.contourRects
+
+	#pt1,pt2:绊线的位置, pt3,pt4检测入侵的方向
+	def isInvaded(self, frame, pt1=(0.5,0), pt2=(0.5,1), pt3=(0, 0), pt4=(1, 0), ratio=0.002, learningRate=-1, warningFrames = 80):
+		result = False
+		rect = []
+		rects =[]
+		if self.lasttime == 0:
+			ret, rects= self.operate(frame, ratio, learningRate)
+			if not ret:
+				pass
+			else:
+				rect = findMaxRect(rects)
+				self.lastpos = findCentres([rect])[0]
+				#self.lasttime = time.time()
+		else:
+			#t = time.time()
+			#interval = t - self.lasttime
+			#self.lasttime = t
+			ret, rects = self.operate(frame, ratio, learningRate)
+			if not ret:
+				pass
+			else:
+				h, w = frame.shape[0:2]
+				if type(pt1[0]) == float or type(pt1[1]) == float or type(pt2[0]) == float or type(pt2[1]) == float:
+					ptC = Point(pt1[0]*w,pt1[1]*h)
+					ptD = Point(pt2[0]*w,pt2[1]*h)
+				else:
+					ptC = Point(pt1[0],pt1[1])
+					ptD = Point(pt2[0],pt2[1])
+				rect = findMaxContour(rects)
+				pos= findCentres([rect])[0]
+				ptA = Point(self.lastpos[0], self.lastpos[1])
+				ptB = Point(pos[0], pos[1])
+				ret = isIntersected(ptA, ptB, ptC, ptD)
+				if not ret:
+					result = False
+				else:
+					if len(self.path)==0:
+						self.path.append(self.lastpos)
+						self.path.append(pos)
+					else:
+						self.path.append(pos)
+					dctvct = np.subtract(pt4,pt3)
+					#spdvct = np.subtract(pos,self.lastpos)/interval
+					spdvct = np.subtract(pos,self.lastpos)
+					if	np.dot(dctvct,spdvct)>0:
+						result = True
+						print '111111111111111111'
+					else:
+						result = False
+					#TODO!!!!!!!!!!!!!!!!!!!!!!!
+		return result,rect,rects
 
 	def getBgm(self):
 		return self.bgSubtractor.getBackgroundImage()
@@ -154,9 +252,8 @@ class HoveringDetector(InvasionDetector):
 		self.fcount = 0
 		#建模帧数
 		self.count = 0
-		self.ishovering = False
 		super(HoveringDetector, self).__init__(0.002, 0.001)
-	#interval徘徊时间
+	#徘徊检测: interval徘徊帧数, modeling建模帧数, ratio敏感度:目标占画面比, 学习率
 	def isHovering(self, frame, interval=200,modeling_frame_num=120, ratio=0.002, learningRate=0.0001):
 		if self.count<=modeling_frame_num:
 			self.count+=1
@@ -168,22 +265,22 @@ class HoveringDetector(InvasionDetector):
 				self.fcount = 0
 				self.tcount += 1
 				if self.tcount >= interval:
-					self.ishovering = True
+					result = True
 				else:
-					self.ishovering = False
+					result = False
 			else:
 				if self.tcount > 0:
 					if self.tcount >= interval:
-						self.ishovering = True
+						result = True
 					else:
-						self.ishovering = False
+						result = False
 					self.fcount += 1
 					if self.fcount >= interval:
 						self.tcount = 0
 						self.fcount = 0
 				else:
-					self.ishovering = False
-		return self.ishovering, rects
+					result = False
+		return result, rects
 
 
 #cap = cv2.VideoCapture('1.avi')
@@ -196,7 +293,7 @@ cap = cv2.VideoCapture('rtsp://192.168.1.133:554/cam/realmonitor?channel=1&subty
 
 # learningRate = -1
 # bgm_update_flag = False
-# id = InvasionDetector()
+id = InvasionDetector()
 hd = HoveringDetector()
 # fgbg = cv2.createBackgroundSubtractorGMG()
 # bgs = cv2.createBackgroundSubtractorMOG2()
@@ -208,8 +305,10 @@ while 1:
 	if not ret:
 		break
 
-	ret, rects = hd.isHovering(frame,modeling_frame_num=200,ratio=0.01)
+	#ret, rects = hd.isHovering(frame,modeling_frame_num=200,ratio=0.01)
 	# ret,rects = id.operate(frame,0.002)
+	ret,rect,rects = id.isInvaded(frame)
+
 	if len(rects) > 0:
 		drawRectangles(frame, rects)
 		cps = findCentres(rects)
@@ -223,7 +322,7 @@ while 1:
 	# bgimg = id.getBgm()
 	cv2.namedWindow('fg', 0)
 	# cv2.namedWindow('bg', 0)
-	cv2.imshow('fg', hd.fgmask)
+	#cv2.imshow('fg', hd.fgmask)
 	cv2.imshow('frame', frame)
 	# cv2.imshow('bg', hd.getBgm())
 	k = cv2.waitKey(1) & 0xff

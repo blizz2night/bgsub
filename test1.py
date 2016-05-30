@@ -20,8 +20,8 @@ def test3():
 #def sum2(x,y):
     #return lambda x+y
 def test4():
-    numb = range(101)
-    return reduce(lambda x,y:x+y,numb)
+    b
+    return reduce(lambda x,y:x+y,range(101))
     
     
 if __name__=='__main__':
