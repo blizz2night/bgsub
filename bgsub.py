@@ -6,7 +6,6 @@ Created on 2016/5/11
 """
 import cv2
 import numpy as np
-import time
 
 
 def scaleResize(frame):
@@ -127,7 +126,7 @@ ZERO = 1e-9
 
 def negative(vector):
     """取反"""
-    return Vector(vector.end_point, vector.start_point)
+    return Vector(vector.end, vector.start)
 
 def vector_product(vectorA, vectorB):
     '''计算 x_1 * y_2 - x_2 * y_1'''
@@ -155,15 +154,14 @@ class InvasionDetector(object):
 		self.learningRate = learningRate
 		self.scale = 1
 		self.fgmask = np.array([])
-		# self.bgm = np.array([])
+
 		self.contourList = []
 		self.maxContour = []
 		self.bbox = []
 		self.contourRects = []
 		self.ret = False
-		#上一帧时间
-		self.lasttime = 0
-		self.lastpos = [-1,-1]
+
+		self.count = 0
 		self.path = []
 
 	#入侵检测: ratio敏感度:目标占画面比
@@ -190,27 +188,22 @@ class InvasionDetector(object):
 			self.ret = False
 		return self.ret, self.contourRects
 
-	#pt1,pt2:绊线的位置, pt3,pt4检测入侵的方向
-	def isInvaded(self, frame, pt1=(0.5,0), pt2=(0.5,1), pt3=(0, 0), pt4=(1, 0), ratio=0.002, learningRate=-1, warningFrames = 80):
+	#单向入侵检测, pt1,pt2:绊线的位置, pt3,pt4检测入侵的方向, interval:检测持续帧数
+	def isInvaded(self, frame, pt1=(0.5, 0), pt2=(0.5, 1), pt3=(0, 0), pt4=(1, 0), ratio=0.002, learningRate=-1, interval=23):
 		result = False
 		rect = []
 		rects =[]
-		if self.lasttime == 0:
-			ret, rects= self.operate(frame, ratio, learningRate)
-			if not ret:
-				pass
-			else:
-				rect = findMaxRect(rects)
-				self.lastpos = findCentres([rect])[0]
-				#self.lasttime = time.time()
+		ret, rects = self.operate(frame, ratio, learningRate)
+		if not ret:
+			pass
 		else:
-			#t = time.time()
-			#interval = t - self.lasttime
-			#self.lasttime = t
-			ret, rects = self.operate(frame, ratio, learningRate)
-			if not ret:
+			rect = findMaxRect(rects)
+			pos = findCentres([rect])[0]
+			self.path.append(pos)
+			if self.count == 0:
 				pass
 			else:
+				self.count += 1
 				h, w = frame.shape[0:2]
 				if type(pt1[0]) == float or type(pt1[1]) == float or type(pt2[0]) == float or type(pt2[1]) == float:
 					ptC = Point(pt1[0]*w,pt1[1]*h)
@@ -218,29 +211,28 @@ class InvasionDetector(object):
 				else:
 					ptC = Point(pt1[0],pt1[1])
 					ptD = Point(pt2[0],pt2[1])
-				rect = findMaxContour(rects)
-				pos= findCentres([rect])[0]
-				ptA = Point(self.lastpos[0], self.lastpos[1])
+				ptA = Point(self.path[0][0], self.path[0][1])
 				ptB = Point(pos[0], pos[1])
 				ret = isIntersected(ptA, ptB, ptC, ptD)
 				if not ret:
-					result = False
+					pass
 				else:
-					if len(self.path)==0:
-						self.path.append(self.lastpos)
-						self.path.append(pos)
-					else:
-						self.path.append(pos)
-					dctvct = np.subtract(pt4,pt3)
+					dctvct = np.subtract(pt4, pt3)
+					#print dctvct
 					#spdvct = np.subtract(pos,self.lastpos)/interval
-					spdvct = np.subtract(pos,self.lastpos)
-					if	np.dot(dctvct,spdvct)>0:
+					spdvct = np.subtract(pos, self.path[0])
+					#print spdvct
+					#检测到单项入侵目标
+					if np.dot(dctvct, spdvct) > 0:
 						result = True
-						print '111111111111111111'
+						#print 'invade!!',time.time()
 					else:
-						result = False
-					#TODO!!!!!!!!!!!!!!!!!!!!!!!
-		return result,rect,rects
+						pass
+		self.count += 1
+		self.count %= interval
+		if self.count == 0:
+			self.path = []
+		return result, rect, rects
 
 	def getBgm(self):
 		return self.bgSubtractor.getBackgroundImage()
@@ -253,81 +245,99 @@ class HoveringDetector(InvasionDetector):
 		#建模帧数
 		self.count = 0
 		super(HoveringDetector, self).__init__(0.002, 0.001)
-	#徘徊检测: interval徘徊帧数, modeling建模帧数, ratio敏感度:目标占画面比, 学习率
-	def isHovering(self, frame, interval=200,modeling_frame_num=120, ratio=0.002, learningRate=0.0001):
-		if self.count<=modeling_frame_num:
-			self.count+=1
+	#徘徊检测: interval徘徊持续帧数, warning报警持续帧数, modeling建模帧数, ratio敏感度:目标占画面比, 学习率
+	def isHovering(self, frame, interval=200, warning = 69, modeling_frame_num=120, ratio=0.002, learningRate=0.0001):
+		result = False
+		if self.count <= modeling_frame_num:
+			self.count += 1
 			ret, rects = super(HoveringDetector, self).operate(frame, ratio, learningRate=-1)
-			return ret,rects
+			return result, rects
 		else:
 			ret, rects = super(HoveringDetector, self).operate(frame, ratio, learningRate)
+			if	np.count_nonzero(self.fgmask)/self.fgmask.size > 0.8:
+				self.count = 0
+				return result, rects
 			if ret:
 				self.fcount = 0
 				self.tcount += 1
-				if self.tcount >= interval:
-					result = True
-				else:
-					result = False
 			else:
 				if self.tcount > 0:
-					if self.tcount >= interval:
-						result = True
-					else:
-						result = False
 					self.fcount += 1
-					if self.fcount >= interval:
+					if self.fcount >= warning:
 						self.tcount = 0
 						self.fcount = 0
 				else:
-					result = False
+					pass
+			if self.tcount >= interval:
+				result = True
+			else:
+				pass
 		return result, rects
 
 
-#cap = cv2.VideoCapture('1.avi')
-# sensitivity = 300
-cap = cv2.VideoCapture('rtsp://192.168.1.133:554/cam/realmonitor?channel=1&subtype=1&unicast=true&proto=Onvif')
-# cv2.namedWindow('frame')
-# cv2.namedWindow('fgmask')
-# bgSubtractor = cv2.createBackgroundSubtractorKNN()
-# kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+cap = cv2.VideoCapture('1.avi')
 
-# learningRate = -1
-# bgm_update_flag = False
+#cap = cv2.VideoCapture('rtsp://192.168.1.133:554/cam/realmonitor?channel=1&subtype=1&unicast=true&proto=Onvif')
+#入侵
 id = InvasionDetector()
-hd = HoveringDetector()
-# fgbg = cv2.createBackgroundSubtractorGMG()
-# bgs = cv2.createBackgroundSubtractorMOG2()
-
-firstFrame = True
-canvas = np.array([], np.uint8)
 while 1:
 	ret, frame = cap.read()
 	if not ret:
 		break
-
-	#ret, rects = hd.isHovering(frame,modeling_frame_num=200,ratio=0.01)
-	# ret,rects = id.operate(frame,0.002)
-	ret,rect,rects = id.isInvaded(frame)
-
+	ret, rects = id.operate(frame)
 	if len(rects) > 0:
-		drawRectangles(frame, rects)
-		cps = findCentres(rects)
-		# rects = findRectangles(id.fgmask,id.contourList)
-		# drawRectangles(frame,rects)
-		# contours = np.array(id.contourList)*id.scale
-		# cv2.drawContours(frame,contours,-1,(0,255,0),3)
-	#        if len(rects)>0:
-	#            drawRectangles(frame,rects)
-
-	# bgimg = id.getBgm()
-	cv2.namedWindow('fg', 0)
-	# cv2.namedWindow('bg', 0)
-	#cv2.imshow('fg', hd.fgmask)
+		drawRectangles(frame,rects)
+	if ret:
+		print "invader"
+	cv2.imshow('fg', id.fgmask)
 	cv2.imshow('frame', frame)
-	# cv2.imshow('bg', hd.getBgm())
-	k = cv2.waitKey(1) & 0xff
+	k = cv2.waitKey(30) & 0xff
 	if k == 27:
 		break
+######
+  
+##单向越界
+#id = InvasionDetector()
+#while 1:
+#	ret, frame = cap.read()
+#	if not ret:
+#		break
+#	ret, rect, rects = id.isInvaded(frame,pt4=(-1,0),ratio=0.02)
+#	if len(rect) > 0:
+#		drawRectangles(frame,rects)
+#		drawRectangle(frame, rect, (0, 255, 0))
+#	if len(id.path)>1:
+#		cv2.polylines(frame,np.array([id.path],np.int32),0,(255,0,0),thickness=2)
+#	if ret:
+#		print "invader"
+#	cv2.imshow('fg', id.fgmask)
+#	cv2.imshow('frame', frame)
+#	k = cv2.waitKey(30) & 0xff
+#	if k == 27:
+#		break
+#######
+
+##徘徊
+# hd = HoveringDetector()
+# while 1:
+# 	ret, frame = cap.read()
+# 	if not ret:
+# 		break
+# 	ret, rects = hd.isHovering(frame,interval=50,modeling_frame_num=23,ratio=0.02)
+# 	if len(rects) > 0:
+# 		drawRectangles(frame, rects)
+# 	if ret:
+# 		print "hovering"
+# 	cv2.imshow('fg', hd.fgmask)
+# 	cv2.imshow('frame', frame)
+# 	# cv2.imshow('bg', hd.getBgm())
+# 	k = cv2.waitKey(1) & 0xff
+# 	if k == 27:
+# 		break
+#######
+
+
+
 	#        temp,scale = scaleResize(frame)
 	#        #背景差分
 	#        fgmask = bgSubtractor.apply(temp, learningRate)
