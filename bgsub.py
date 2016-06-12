@@ -147,48 +147,36 @@ def isIntersected(A, B, C, D):
         and (vector_product(CA, CB) * vector_product(DA, DB) <= ZERO)
 
 class InvasionDetector(object):
-	def __init__(self, ratio=0.002, learningRate=-1):
+	def __init__(self):
 		# self.bgSubtractor = cv2.createBackgroundSubtractorKNN()
 		self.bgSubtractor = cv2.BackgroundSubtractorMOG()
-		self.ratio = ratio
-		self.learningRate = learningRate
-		self.scale = 1
-		self.fgmask = np.array([])
-
-		self.contourList = []
-		self.maxContour = []
-		self.bbox = []
-		self.contourRects = []
-		self.ret = False
-
 		self.count = 0
 		self.path = []
 
 	#入侵检测: ratio敏感度:目标占画面比
 	def operate(self, frame, ratio=0.002, learningRate=-1):
-		self.ratio = ratio
-		self.learningRate = learningRate
-		frame, self.scale = scaleResize(frame)
+		#self.ratio = ratio
+		#self.learningRate = learningRate
+		result = False
+		frame, scale = scaleResize(frame)
 		# start = time.time()
-		self.fgmask = self.bgSubtractor.apply(frame, self.fgmask, self.learningRate)
+		fgmask = np.array([],np.uint8)
+		fgmask = self.bgSubtractor.apply(frame, fgmask, learningRate)
 		# end = time.time()
 		# print end-start
 		# 连通区域
-		self.contourList = findContours(self.fgmask)
-		if len(self.contourList) > 0:
-			self.contourRects = findRectangles(self.fgmask, self.contourList, self.ratio)
-			if len(self.contourRects) > 0:
-				self.ret = True
-				tempArray = np.array(self.contourRects) * self.scale
-				self.contourRects = tempArray.tolist()
-			else:
-				self.ret = False
+		contourList = findContours(fgmask)
+		if len(contourList) > 0:
+			contourRects = findRectangles(fgmask, contourList, ratio)
+			if len(contourRects) > 0:
+				result = True
+				tempArray = np.array(contourRects) * scale
+				contourRects = tempArray.tolist()
 		else:
-			self.contourRects = []
-			self.ret = False
-		return self.ret, self.contourRects
+			contourRects = []
+		return result, contourRects, fgmask
 
-	#单向入侵检测, pt1,pt2:绊线的位置, pt3,pt4检测入侵的方向, interval:检测持续帧数
+	#单向入侵检测, pt1,pt2:绊线的位置, pt3,pt4检测入侵的方向, ratio敏感度:目标占画面比, interval:检测持续帧数
 	def isInvaded(self, frame, pt1=(0.5, 0), pt2=(0.5, 1), pt3=(0, 0), pt4=(1, 0), ratio=0.002, learningRate=-1, interval=23):
 		result = False
 		rect = []
@@ -232,7 +220,7 @@ class InvasionDetector(object):
 		self.count %= interval
 		if self.count == 0:
 			self.path = []
-		return result, rect, rects
+		return result, rect, self.path
 
 	def getBgm(self):
 		return self.bgSubtractor.getBackgroundImage()
@@ -245,7 +233,7 @@ class HoveringDetector(InvasionDetector):
 		#建模帧数
 		self.count = 0
 		super(HoveringDetector, self).__init__(0.002, 0.001)
-	#徘徊检测: interval徘徊持续帧数, warning报警持续帧数, modeling建模帧数, ratio敏感度:目标占画面比, 学习率
+	#徘徊检测: interval徘徊持续帧数, warning报警持续帧数, modeling建模帧数, ratio敏感度:目标占画面比
 	def isHovering(self, frame, interval=200, warning = 69, modeling_frame_num=120, ratio=0.002, learningRate=0.0001):
 		result = False
 		if self.count <= modeling_frame_num:
@@ -284,18 +272,18 @@ while 1:
 	ret, frame = cap.read()
 	if not ret:
 		break
-	ret, rects = id.operate(frame)
+	ret, rects, fgmask = id.operate(frame)
 	if len(rects) > 0:
-		drawRectangles(frame,rects)
+		drawRectangles(frame, rects)
 	if ret:
 		print "invader"
-	cv2.imshow('fg', id.fgmask)
+	cv2.imshow('fg', fgmask)
 	cv2.imshow('frame', frame)
-	k = cv2.waitKey(30) & 0xff
+	k = cv2.waitKey(10) & 0xff
 	if k == 27:
 		break
 ######
-  
+
 ##单向越界
 #id = InvasionDetector()
 #while 1:
@@ -312,7 +300,7 @@ while 1:
 #		print "invader"
 #	cv2.imshow('fg', id.fgmask)
 #	cv2.imshow('frame', frame)
-#	k = cv2.waitKey(30) & 0xff
+#	k = cv2.waitKey(10) & 0xff
 #	if k == 27:
 #		break
 #######
@@ -331,7 +319,7 @@ while 1:
 # 	cv2.imshow('fg', hd.fgmask)
 # 	cv2.imshow('frame', frame)
 # 	# cv2.imshow('bg', hd.getBgm())
-# 	k = cv2.waitKey(1) & 0xff
+# 	k = cv2.waitKey(10) & 0xff
 # 	if k == 27:
 # 		break
 #######
