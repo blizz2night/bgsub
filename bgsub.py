@@ -228,21 +228,23 @@ class InvasionDetector(object):
 
 class HoveringDetector(InvasionDetector):
 	def __init__(self):
+		#累计检测到前景帧数
 		self.tcount = 0
+		#累计检测失败帧数
 		self.fcount = 0
-		#建模帧数
+		#累计建模帧数
 		self.count = 0
-		super(HoveringDetector, self).__init__(0.002, 0.001)
+		super(HoveringDetector, self).__init__()
 	#徘徊检测: interval徘徊持续帧数, warning报警持续帧数, modeling建模帧数, ratio敏感度:目标占画面比
 	def isHovering(self, frame, interval=200, warning = 69, modeling_frame_num=120, ratio=0.002, learningRate=0.0001):
 		result = False
 		if self.count <= modeling_frame_num:
 			self.count += 1
-			ret, rects = super(HoveringDetector, self).operate(frame, ratio, learningRate=-1)
+			ret, rects, fgmask = super(HoveringDetector, self).operate(frame, ratio, learningRate=-1)
 			return result, rects
 		else:
-			ret, rects = super(HoveringDetector, self).operate(frame, ratio, learningRate)
-			if	np.count_nonzero(self.fgmask)/self.fgmask.size > 0.8:
+			ret, rects, fgmask = super(HoveringDetector, self).operate(frame, ratio, learningRate)
+			if	np.count_nonzero(fgmask)/fgmask.size > 0.8:
 				self.count = 0
 				return result, rects
 			if ret:
@@ -266,23 +268,23 @@ class HoveringDetector(InvasionDetector):
 cap = cv2.VideoCapture('1.avi')
 
 #cap = cv2.VideoCapture('rtsp://192.168.1.133:554/cam/realmonitor?channel=1&subtype=1&unicast=true&proto=Onvif')
-#入侵
-id = InvasionDetector()
-while 1:
-	ret, frame = cap.read()
-	if not ret:
-		break
-	ret, rects, fgmask = id.operate(frame)
-	if len(rects) > 0:
-		drawRectangles(frame, rects)
-	if ret:
-		print "invader"
-	cv2.imshow('fg', fgmask)
-	cv2.imshow('frame', frame)
-	k = cv2.waitKey(10) & 0xff
-	if k == 27:
-		break
-######
+# #入侵
+# id = InvasionDetector()
+# while 1:
+# 	ret, frame = cap.read()
+# 	if not ret:
+# 		break
+# 	ret, rects, fgmask = id.operate(frame)
+# 	if len(rects) > 0:
+# 		drawRectangles(frame, rects)
+# 	if ret:
+# 		print "invader"
+# 	cv2.imshow('fg', fgmask)
+# 	cv2.imshow('frame', frame)
+# 	k = cv2.waitKey(10) & 0xff
+# 	if k == 27:
+# 		break
+# ######
 
 ##单向越界
 #id = InvasionDetector()
@@ -305,24 +307,24 @@ while 1:
 #		break
 #######
 
-##徘徊
-# hd = HoveringDetector()
-# while 1:
-# 	ret, frame = cap.read()
-# 	if not ret:
-# 		break
-# 	ret, rects = hd.isHovering(frame,interval=50,modeling_frame_num=23,ratio=0.02)
-# 	if len(rects) > 0:
-# 		drawRectangles(frame, rects)
-# 	if ret:
-# 		print "hovering"
-# 	cv2.imshow('fg', hd.fgmask)
-# 	cv2.imshow('frame', frame)
-# 	# cv2.imshow('bg', hd.getBgm())
-# 	k = cv2.waitKey(10) & 0xff
-# 	if k == 27:
-# 		break
-#######
+#徘徊
+hd = HoveringDetector()
+while 1:
+	ret, frame = cap.read()
+	if not ret:
+		break
+	ret, rects = hd.isHovering(frame,interval=50,modeling_frame_num=23,ratio=0.02)
+	if len(rects) > 0:
+		drawRectangles(frame, rects)
+	if ret:
+		print "hovering"
+	#cv2.imshow('fg', fgmask)
+	cv2.imshow('frame', frame)
+	# cv2.imshow('bg', hd.getBgm())
+	k = cv2.waitKey(10) & 0xff
+	if k == 27:
+		break
+######
 
 
 
