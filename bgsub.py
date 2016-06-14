@@ -160,7 +160,7 @@ class InvasionDetector(object):
 		result = False
 		frame, scale = scaleResize(frame)
 		# start = time.time()
-		fgmask = np.array([],np.uint8)
+		fgmask = np.array([], np.uint8)
 		fgmask = self.bgSubtractor.apply(frame, fgmask, learningRate)
 		# end = time.time()
 		# print end-start
@@ -176,12 +176,23 @@ class InvasionDetector(object):
 			contourRects = []
 		return result, contourRects, fgmask
 
+	def operateROI(self, frame, roi, ratio=0.002, learningRate=-1):
+		roiArray = frame[roi[1]:roi[1]+roi[3], roi[0]:roi[0]+roi[2]]
+		contourRects = []
+		fgmask = []
+		result, contourRects, fgmask = self.operate(roiArray, ratio, learningRate)
+		if len(contourRects)>0:
+			temp = np.array(contourRects)
+			temp+=(roi[0],roi[1],0,0)
+			contourRects = temp.tolist()
+		return result, contourRects, fgmask
+
 	#单向入侵检测, pt1,pt2:绊线的位置, pt3,pt4检测入侵的方向, ratio敏感度:目标占画面比, interval:检测持续帧数
-	def isInvaded(self, frame, pt1=(0.5, 0), pt2=(0.5, 1), pt3=(0, 0), pt4=(1, 0), ratio=0.002, learningRate=-1, interval=23):
+	def isInvaded(self, frame, pt1=(0.5, 0), pt2=(0.5, 1), pt3=(0, 0), pt4=(1, 0), ratio=0.002, learningRate = -1, interval = 23):
 		result = False
 		rect = []
-		rects =[]
-		ret, rects = self.operate(frame, ratio, learningRate)
+		rects = []
+		ret, rects, fgmask = self.operate(frame, ratio, learningRate)
 		if not ret:
 			pass
 		else:
@@ -220,11 +231,30 @@ class InvasionDetector(object):
 		self.count %= interval
 		if self.count == 0:
 			self.path = []
-		return result, rect, self.path
+		return result, rect, self.path, fgmask
 
-	def getBgm(self):
-		return self.bgSubtractor.getBackgroundImage()
-
+	def isInvadedROI(self, frame, roi, pt1=(0.5, 0), pt2=(0.5, 1), pt3=(0, 0), pt4=(1, 0), ratio=0.002, learningRate = -1, interval = 23):
+		h, w = frame.shape[0:2]
+		if type(pt1[0]) == float or type(pt1[1]) == float or type(pt2[0]) == float or type(pt2[1]) == float:
+			pt1 = (pt1[0] * w, pt1[1] * h)
+			pt2 = (pt2[0] * w, pt2[1] * h)
+		if type(pt3[0]) == float or type(pt3[1]) == float or type(pt3[0]) == float or type(pt3[1]) == float:
+			pt3 = (pt3[0] * w, pt3[1] * h)
+			pt4 = (pt4[0] * w, pt4[1] * h)
+		roiArray = frame[roi[1]:roi[1] + roi[3], roi[0]:roi[0] + roi[2]]
+		rept1 = (pt1[0]- roi[0], pt1[1]-roi[1])
+		rept2 = (pt2[0] - roi[0], pt2[1] - roi[1])
+		rept3 = (pt3[0] - roi[0], pt3[1] - roi[1])
+		rept4 = (pt4[0] - roi[0], pt4[1] - roi[1])
+		result, rect, self.path, fgmask = self.isInvaded(roiArray, rept1, rept2, rept3, rept4, ratio, learningRate, interval)
+		if len(rect)>0:
+			rect = (rect[0]+roi[0], rect[1]+roi[1],rect[2], rect[3])
+		path = []
+		if len(self.path)>0:
+			pathArray = np.array(self.path)
+			pathArray+=(roi[0],roi[1])
+			path = pathArray.tolist()
+		return result, rect, path, fgmask
 
 class HoveringDetector(InvasionDetector):
 	def __init__(self):
@@ -264,6 +294,14 @@ class HoveringDetector(InvasionDetector):
 				pass
 		return result, rects
 
+	def isHoveringROI(self, frame, roi, interval=200, warning = 69, modeling_frame_num=120, ratio=0.002, learningRate=0.0001):
+		roiArray = frame[roi[1]:roi[1] + roi[3], roi[0]:roi[0] + roi[2]]
+		result, rects = self.isHovering(roiArray,interval,warning,modeling_frame_num,ratio,learningRate)
+		if len(rects)>0:
+			temp = np.array(rects)
+			temp+=(roi[0],roi[1],0,0)
+			rects = temp.tolist()
+		return result, rects
 
 cap = cv2.VideoCapture('1.avi')
 
@@ -307,24 +345,24 @@ cap = cv2.VideoCapture('1.avi')
 #		break
 #######
 
-#徘徊
-hd = HoveringDetector()
-while 1:
-	ret, frame = cap.read()
-	if not ret:
-		break
-	ret, rects = hd.isHovering(frame,interval=50,modeling_frame_num=23,ratio=0.02)
-	if len(rects) > 0:
-		drawRectangles(frame, rects)
-	if ret:
-		print "hovering"
-	#cv2.imshow('fg', fgmask)
-	cv2.imshow('frame', frame)
-	# cv2.imshow('bg', hd.getBgm())
-	k = cv2.waitKey(10) & 0xff
-	if k == 27:
-		break
-######
+# #徘徊
+# hd = HoveringDetector()
+# while 1:
+# 	ret, frame = cap.read()
+# 	if not ret:
+# 		break
+# 	ret, rects = hd.isHovering(frame,interval=50,modeling_frame_num=23,ratio=0.02)
+# 	if len(rects) > 0:
+# 		drawRectangles(frame, rects)
+# 	if ret:
+# 		print "hovering"
+# 	#cv2.imshow('fg', fgmask)
+# 	cv2.imshow('frame', frame)
+# 	# cv2.imshow('bg', hd.getBgm())
+# 	k = cv2.waitKey(10) & 0xff
+# 	if k == 27:
+# 		break
+# ######
 
 
 
